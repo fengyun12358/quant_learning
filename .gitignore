@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+data/*.xls
+data/*.xlsx
+data/test_etf.csv
