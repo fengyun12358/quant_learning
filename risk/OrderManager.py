@@ -25,13 +25,14 @@ from adapter.broker_gateway import BrokerGateway, Order, OrderResult, Position
 # ============================================================
 
 class OrderStatus(Enum):
-    CREATED   = "created"
-    PENDING   = "pending"
-    PARTIAL   = "partial"
-    FILLED    = "filled"
-    REJECTED  = "rejected"
-    CANCELLED = "cancelled"
-    TIMEOUT   = "timeout"
+    CREATED    = "created"     # 已创建，尚未提交
+    SUBMITTED  = "submitted"   # 已提交到券商，等待交易所确认
+    ACCEPTED   = "accepted"    # 交易所已接受，等待成交
+    PARTIAL    = "partial"     # 部分成交
+    FILLED     = "filled"      # 完全成交
+    REJECTED   = "rejected"    # 券商/交易所拒单
+    CANCELLED  = "cancelled"   # 已撤销
+    TIMEOUT    = "timeout"     # 超时未成交
 
 
 @dataclass
@@ -124,7 +125,7 @@ class OrderManager:
     def cancel(self, order_id: str):
         """撤销订单。"""
         mo = self._orders.get(order_id)
-        if mo and mo.status in (OrderStatus.PENDING, OrderStatus.PARTIAL):
+        if mo and mo.status in (OrderStatus.SUBMITTED, OrderStatus.PARTIAL):
             self._broker.cancel(order_id)
             mo.status = OrderStatus.CANCELLED
 
@@ -137,7 +138,7 @@ class OrderManager:
 
         for mo in list(self._orders.values()):
             # 超时检测
-            if mo.status == OrderStatus.PENDING:
+            if mo.status == OrderStatus.SUBMITTED:
                 elapsed = now - mo.submitted_at
                 if elapsed > self._timeout_sec:
                     if mo.retry_count < self._max_retries:
@@ -158,14 +159,14 @@ class OrderManager:
 
     def pending_count(self) -> int:
         return sum(1 for mo in self._orders.values()
-                   if mo.status in (OrderStatus.PENDING, OrderStatus.PARTIAL))
+                   if mo.status in (OrderStatus.SUBMITTED, OrderStatus.PARTIAL))
 
     # ---- 对外通知 ----
 
     def on_broker_fill(self, order_id: str, fill_price: float, fill_size: int):
         """Broker 成交后回调——PaperBroker.update() 内部调用。"""
         mo = self._orders.get(order_id)
-        if mo and mo.status == OrderStatus.PENDING:
+        if mo and mo.status == OrderStatus.SUBMITTED:
             mo.status = OrderStatus.FILLED
             mo.filled_price = fill_price
             mo.filled_size = fill_size
@@ -199,7 +200,7 @@ class OrderManager:
                 mo.callback.on_order_rejected(order_id, result.reject_reason)
 
         elif result.status == "pending":
-            mo.status = OrderStatus.PENDING
+            mo.status = OrderStatus.SUBMITTED
 
         # 状态迁移 → 自动持久化
         if self._persistence:
@@ -227,7 +228,7 @@ class OrderManager:
         # 事件驱动模型：Broker 返回 pending → 等 Broker 回调
         # 同步模型：Broker 立即返回 filled/rejected → 直接 notify
         if result.status == "pending":
-            mo.status = OrderStatus.PENDING
+            mo.status = OrderStatus.SUBMITTED
             if hasattr(self._broker, 'set_order_callback'):
                 self._broker.set_order_callback(self.on_broker_fill)
         else:
@@ -235,6 +236,7 @@ class OrderManager:
 
     def _has_pending(self) -> bool:
         return any(
-            mo.status in (OrderStatus.PENDING, OrderStatus.PARTIAL)
+            mo.status in (OrderStatus.SUBMITTED, OrderStatus.ACCEPTED,
+                          OrderStatus.PARTIAL)
             for mo in self._orders.values()
         )
