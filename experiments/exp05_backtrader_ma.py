@@ -26,8 +26,6 @@ class MACrossBT(bt.Strategy):
     params = dict(ma_short=5, ma_long=20, stop_pct=0.03)
 
     def __init__(self):
-        self.sma_short = bt.indicators.SMA(period=self.p.ma_short)
-        self.sma_long  = bt.indicators.SMA(period=self.p.ma_long)
         self.logic = MACrossLogic(self.p.ma_short, self.p.ma_long)
         self.order = None
         self.stop_order = None
@@ -59,7 +57,7 @@ class MACrossBT(bt.Strategy):
         if self.order:
             return
 
-        signal = self.logic.update(self.sma_short[0], self.sma_long[0])
+        signal = self.logic.update(self.data.close[0])
 
         if signal == "buy" and not self.position:
             if not self._check_risk("buy"):

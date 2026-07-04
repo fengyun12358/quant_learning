@@ -35,8 +35,6 @@ class MACrossQMT:
         self.gate = risk_gate       # RiskGate 实例（和 Backtrader 版共用）
         self.broker = broker        # MockBrokerGateway / MiniQMTGateway
         self.stop_pct = stop_pct
-        self._sma_short_vals = []   # 模拟均线计算（实际中 MiniQMT 可以调 talib）
-        self._sma_long_vals = []
         self._in_position = False
         self._entry_price = 0.0
         self._consecutive_losses = 0
@@ -46,25 +44,9 @@ class MACrossQMT:
         """
         收到一根 K 线——等同于 Backtrader 的 next()。
         每根 bar 调用一次。
-
-        参数全部是平台无关的原始数据，不依赖 QMT API 结构体。
         """
-        # 1. 更新均线（简化版，实际中用 talib 或 pandas）
-        self._sma_short_vals.append(close)
-        self._sma_long_vals.append(close)
-        if len(self._sma_short_vals) > 5:
-            self._sma_short_vals.pop(0)
-        if len(self._sma_long_vals) > 20:
-            self._sma_long_vals.pop(0)
-
-        if len(self._sma_long_vals) < 20:
-            return  # 数据不足，不产生信号
-
-        sma_short = sum(self._sma_short_vals) / len(self._sma_short_vals)
-        sma_long = sum(self._sma_long_vals) / len(self._sma_long_vals)
-
-        # 2. 信号生成 → MACrossLogic（和 Backtrader 版完全相同）
-        signal = self.logic.update(sma_short, sma_long)
+        # 1. 信号生成 → MACrossLogic（和 Backtrader 版完全相同）
+        signal = self.logic.update(close)
 
         # 3. 构建 RiskContext（QMT 版 ContextBuilder 的职责——内联简化）
         pos = self.broker.query_position(symbol)
