@@ -123,6 +123,14 @@ class MiniQMTGateway(BrokerGateway):
         """注册成交回调 → PaperBroker 或 xtquant 的 on_order_update。"""
         self._broker.set_order_callback(callback)
 
+    def set_current_price(self, symbol: str, price: float):
+        """V1: 更新行情（委托 PaperBroker）。V2: 不需要（xtquant 推送）。"""
+        if hasattr(self._broker, 'set_current_price'):
+            self._broker.set_current_price(symbol, price)
+
+    def pending_count(self) -> int:
+        return getattr(self._broker, 'pending_count', lambda: 0)()
+
     def update(self, clock_tick: float = 1.0):
         """V1: 推进 PaperBroker 时钟。V2: 不需要（xtquant 自行回调）。"""
         self._broker.update(clock_tick)
