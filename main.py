@@ -17,6 +17,8 @@ EXPERIMENTS = {
     "2": ("exp02_sizer_comparison",  "真实ETF仓位管理对比"),
     "3": ("exp03_portfolio",         "等权投资组合"),
     "4": ("exp04_rebalancing",       "再平衡方式对比 (无/月度/阈值)"),
+    "5": ("exp05_backtrader_ma",       "backtrader_ma"),
+    "6": ("exp06_qmt_verify",          "QMT适配器架构验证"),
 }
 
 
