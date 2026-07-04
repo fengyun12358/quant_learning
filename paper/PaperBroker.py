@@ -53,11 +53,13 @@ class PaperBroker(BrokerGateway):
     # BrokerGateway 接口
     # ================================================================
 
-    def buy(self, symbol, price, size, order_type="market"):
-        return self._submit(symbol, "buy", price, size, order_type)
+    def buy(self, symbol, price, size, order_type="market", order_id=""):
+        return self._submit(symbol, "buy", price, size, order_type,
+                            external_order_id=order_id)
 
-    def sell(self, symbol, price, size, order_type="market"):
-        return self._submit(symbol, "sell", price, size, order_type)
+    def sell(self, symbol, price, size, order_type="market", order_id=""):
+        return self._submit(symbol, "sell", price, size, order_type,
+                            external_order_id=order_id)
 
     def cancel(self, order_id):
         if order_id in self._pending:
@@ -83,13 +85,14 @@ class PaperBroker(BrokerGateway):
     # 事件驱动更新——主循环每 tick 调用
     # ================================================================
 
+    def set_order_callback(self, callback):
+        """设置订单成交回调——OrderManager.notify_result。"""
+        self._order_callback = callback
+
     def update(self, clock_tick: float = 1.0):
         """
         处理 pending 订单。
         clock_tick: 模拟时间推进秒数（默认 1.0s per bar）。
-
-        实际处理逻辑: 所有 pending 订单都推进 clock_tick，
-        到达 ready_time 则立即撮合。
         """
         self._sim_clock = getattr(self, '_sim_clock', 0.0) + clock_tick
         filled_ids = []
@@ -100,8 +103,12 @@ class PaperBroker(BrokerGateway):
 
         for oid in filled_ids:
             po = self._pending.pop(oid)
-            self._execute(po["symbol"], po["side"], po["price"],
-                          po["size"], oid)
+            fill_price, fill_size = self._execute(
+                po["symbol"], po["side"], po["price"], po["size"], oid
+            )
+            cb = getattr(self, '_order_callback', None)
+            if cb:
+                cb(oid, fill_price, fill_size)
 
     def pending_count(self):
         return len(self._pending)
@@ -116,8 +123,9 @@ class PaperBroker(BrokerGateway):
     # 内部
     # ================================================================
 
-    def _submit(self, symbol, side, price, size, order_type):
-        order_id = f"PAPER-{uuid.uuid4().hex[:8]}"
+    def _submit(self, symbol, side, price, size, order_type,
+                external_order_id: str = ""):
+        order_id = external_order_id or f"PAPER-{uuid.uuid4().hex[:8]}"
 
         # 涨跌停拦截
         status = self._market_status.get(symbol, "TRADING")
@@ -148,21 +156,20 @@ class PaperBroker(BrokerGateway):
         return OrderResult(order_id=order_id, status="pending")
 
     def _execute(self, symbol, side, price, size, order_id):
-        """到达 ready_time 后真正撮合。"""
+        """到达 ready_time 后真正撮合。返回 (fill_price, fill_size)。"""
         exec_price = self._slippage.apply(price, side)
 
-        # 部分成交: 10% 概率
         fill_size = size
         if random.random() < self._partial_fill_prob:
             fill_size = random.randint(int(size * 0.5), int(size * 0.9))
-            fill_size = max(100, fill_size)   # 最少 100 股
+            fill_size = max(100, fill_size)
 
         if side == "buy":
             cost = exec_price * fill_size
             if cost > self._cash:
                 fill_size = int(self._cash / exec_price / 100) * 100
                 if fill_size == 0:
-                    return   # 买不起，静默失败
+                    return exec_price, 0
                 cost = exec_price * fill_size
             self._cash -= cost
             self._update_position(symbol, fill_size, exec_price, is_buy=True)
@@ -171,9 +178,11 @@ class PaperBroker(BrokerGateway):
             if not pos or pos.size < fill_size:
                 fill_size = pos.size if pos else 0
             if fill_size == 0:
-                return
+                return exec_price, 0
             self._cash += exec_price * fill_size
             self._update_position(symbol, fill_size, exec_price, is_buy=False)
+
+        return exec_price, fill_size
 
     def _update_position(self, symbol, size, price, is_buy):
         if symbol in self._positions:

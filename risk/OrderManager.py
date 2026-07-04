@@ -162,6 +162,18 @@ class OrderManager:
 
     # ---- 对外通知 ----
 
+    def on_broker_fill(self, order_id: str, fill_price: float, fill_size: int):
+        """Broker 成交后回调——PaperBroker.update() 内部调用。"""
+        mo = self._orders.get(order_id)
+        if mo and mo.status == OrderStatus.PENDING:
+            mo.status = OrderStatus.FILLED
+            mo.filled_price = fill_price
+            mo.filled_size = fill_size
+            if mo.callback:
+                mo.callback.on_order_filled(order_id, fill_price, fill_size)
+            if self._persistence:
+                self._persistence.save_order(mo)
+
     def notify_result(self, order_id: str, result: OrderResult):
         """
         Broker 层返回结果后调用此方法（或在同一线程内直接调）。
@@ -198,20 +210,28 @@ class OrderManager:
     def _send_to_broker(self, mo: ManagedOrder):
         """真正发送订单到 BrokerGateway。"""
         mo.submitted_at = time.time()
-        mo.status = OrderStatus.PENDING
 
         if mo.order.side == "buy":
             result = self._broker.buy(
                 mo.order.symbol, mo.order.price,
-                mo.order.size, mo.order.order_type
+                mo.order.size, mo.order.order_type,
+                order_id=mo.order_id,
             )
         else:
             result = self._broker.sell(
                 mo.order.symbol, mo.order.price,
-                mo.order.size, mo.order.order_type
+                mo.order.size, mo.order.order_type,
+                order_id=mo.order_id,
             )
 
-        self.notify_result(mo.order_id, result)
+        # 事件驱动模型：Broker 返回 pending → 等 Broker 回调
+        # 同步模型：Broker 立即返回 filled/rejected → 直接 notify
+        if result.status == "pending":
+            mo.status = OrderStatus.PENDING
+            if hasattr(self._broker, 'set_order_callback'):
+                self._broker.set_order_callback(self.on_broker_fill)
+        else:
+            self.notify_result(mo.order_id, result)
 
     def _has_pending(self) -> bool:
         return any(
